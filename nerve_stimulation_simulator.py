@@ -42,11 +42,11 @@ CONDUCTIVITY_OUTSIDE = 0.2  # Perfect conductor - ground boundary
 # Electrode Parameters
 ELECTRODE_COUNT = 4  # Number of electrodes
 ELECTRODE_RADIUS = 0.02  # Electrode radius (mm)
-ELECTRODE_POSITIONS = [  # Electrode positions (x, y) in mm - closer to nerve
-    (0.7, 0.7),   # Electrode 1
-    (1.3, 0.7),   # Electrode 2
-    (0.7, 1.3),   # Electrode 3
-    (1.3, 1.3),   # Electrode 4
+ELECTRODE_POSITIONS = [  # Electrode positions (x, y) in mm - clockwise order
+    (0.7, 0.7),   # Electrode 1 (bottom-left)
+    (1.3, 0.7),   # Electrode 2 (bottom-right)
+    (1.3, 1.3),   # Electrode 3 (top-right)
+    (0.7, 1.3),   # Electrode 4 (top-left)
 ]
 ELECTRODE_AMPLITUDES = [0, 2, -2, -1]  # Current amplitudes (mA)
 
@@ -100,7 +100,7 @@ class NerveGeometry:
         """Generate fascicle center positions within the nerve."""
         centers = []
         angle_step = 2 * np.pi / self.fascicle_count
-        fascicle_distance = self.nerve_radius * 0.6  # Position fascicles inside nerve
+        fascicle_distance = self.nerve_radius * 0.5  # Position fascicles at moderate distance from center
         
         for i in range(self.fascicle_count):
             angle = i * angle_step
@@ -146,43 +146,90 @@ class FiberPopulation:
     """Handles nerve fiber generation and activation."""
     
     def __init__(self, fascicle_centers, fascicle_radius, fiber_count_per_fascicle,
-                 diameter_range, threshold_base, threshold_scaling):
+                 threshold_base, threshold_scaling, min_spacing=0.1, 
+                 on_target_mean=12.0, on_target_std=2.0, off_target_mean=6.0, off_target_std=2.0):
         self.fascicle_centers = fascicle_centers
         self.fascicle_radius = fascicle_radius
         self.fiber_count_per_fascicle = fiber_count_per_fascicle
-        self.diameter_range = diameter_range
         self.threshold_base = threshold_base
         self.threshold_scaling = threshold_scaling
+        self.min_spacing = min_spacing
+        self.on_target_mean = on_target_mean
+        self.on_target_std = on_target_std
+        self.off_target_mean = off_target_mean
+        self.off_target_std = off_target_std
         
         # Generate fibers
         self.fibers = self._generate_fibers()
         
     def _generate_fibers(self):
-        """Generate fiber population within fascicles."""
+        """Generate fiber population within fascicles with proper overlap detection."""
         fibers = []
         
         for fascicle_idx, center in enumerate(self.fascicle_centers):
-            for _ in range(self.fiber_count_per_fascicle):
+            fascicle_fibers = []
+            max_attempts = self.fiber_count_per_fascicle * 200  # Even more attempts
+            attempts = 0
+            
+            # Designate fascicles as on-target or off-target (adjacent pairs)
+            # Fascicles 0,1 are on-target, fascicles 2,3 are off-target, etc.
+            is_on_target = (fascicle_idx // 2) % 2 == 0
+            
+            while len(fascicle_fibers) < self.fiber_count_per_fascicle and attempts < max_attempts:
+                attempts += 1
+                
                 # Random position within fascicle
                 angle = np.random.uniform(0, 2 * np.pi)
                 radius = np.random.uniform(0, self.fascicle_radius * 0.8)
                 x = center[0] + radius * np.cos(angle)
                 y = center[1] + radius * np.sin(angle)
                 
-                # Random diameter
-                diameter = np.random.uniform(*self.diameter_range)
+                # Generate diameter based on fascicle type
+                if is_on_target:
+                    diameter = np.random.normal(self.on_target_mean, self.on_target_std)
+                else:
+                    diameter = np.random.normal(self.off_target_mean, self.off_target_std)
                 
-                # Calculate threshold based on diameter
-                threshold = self.threshold_base * (self.threshold_scaling / diameter)
+                # Bound diameter between 1 and 16 μm
+                diameter = np.clip(diameter, 1.0, 16.0)
                 
-                fiber = {
-                    'position': (x, y),
-                    'diameter': diameter,
-                    'threshold': threshold,
-                    'fascicle': fascicle_idx,
-                    'active': False
-                }
-                fibers.append(fiber)
+                # Check for overlap with existing fibers using actual circle sizes
+                overlap = False
+                for existing_fiber in fascicle_fibers:
+                    existing_pos = existing_fiber['position']
+                    existing_diameter = existing_fiber['diameter']
+                    
+                    # Calculate distance between circle centers
+                    distance = np.sqrt((x - existing_pos[0])**2 + (y - existing_pos[1])**2)
+                    
+                    # Circles overlap if distance < sum of radii + minimum spacing
+                    # Convert diameters from μm to mm and min_spacing from μm to mm
+                    diameter_mm = diameter / 1000  # Convert μm to mm
+                    existing_diameter_mm = existing_diameter / 1000  # Convert μm to mm
+                    min_spacing_mm = self.min_spacing / 1000  # Convert μm to mm
+                    required_distance = (diameter_mm + existing_diameter_mm) / 2 + min_spacing_mm
+                    
+                    if distance < required_distance:
+                        overlap = True
+                        break
+                
+                # If no overlap, add the fiber
+                if not overlap:
+                    # Calculate threshold based on diameter
+                    threshold = self.threshold_base * (self.threshold_scaling / diameter)
+                    
+                    fiber = {
+                        'position': (x, y),
+                        'diameter': diameter,
+                        'threshold': threshold,
+                        'fascicle': fascicle_idx,
+                        'is_on_target': is_on_target,
+                        'active': False
+                    }
+                    fascicle_fibers.append(fiber)
+            
+            # Add all successfully placed fibers for this fascicle
+            fibers.extend(fascicle_fibers)
         
         return fibers
     
@@ -434,9 +481,16 @@ class NerveStimulationSimulator:
         # Initialize fiber population
         print("  Creating fiber population...")
         self.fiber_population = FiberPopulation(
-            self.geometry.fascicle_centers, FASCICLE_RADIUS,
-            FIBER_COUNT_PER_FASCICLE, FIBER_DIAMETER_RANGE,
-            FIBER_THRESHOLD_BASE, FIBER_THRESHOLD_SCALING
+            fascicle_centers=self.geometry.fascicle_centers,
+            fascicle_radius=FASCICLE_RADIUS,
+            fiber_count_per_fascicle=FIBER_COUNT_PER_FASCICLE,
+            threshold_base=FIBER_THRESHOLD_BASE,
+            threshold_scaling=FIBER_THRESHOLD_SCALING,
+            min_spacing=0.1,  # Default spacing
+            on_target_mean=6.0,   # Default on-target mean (smaller)
+            on_target_std=2.0,    # Default on-target std
+            off_target_mean=12.0, # Default off-target mean (larger)
+            off_target_std=2.0    # Default off-target std
         )
         print("  Fiber population created.")
         

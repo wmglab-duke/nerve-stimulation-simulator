@@ -69,46 +69,62 @@ def create_parameter_sidebar():
     """Create the parameter control sidebar."""
     st.sidebar.header("🧠 Simulation Parameters")
     
-    # Grid parameters
-    st.sidebar.subheader("Grid Settings")
-    grid_size = st.sidebar.slider("Grid Resolution", 80, 200, 120, 20, 
-                                 help="Higher resolution = more accurate but slower")
-    
-    # Nerve parameters
-    st.sidebar.subheader("Nerve Geometry")
-    nerve_radius = st.sidebar.slider("Nerve Radius (mm)", 0.2, 0.6, 0.4, 0.05)
-    fascicle_count = st.sidebar.slider("Number of Fascicles", 2, 5, 3, 1)
-    fascicle_radius = st.sidebar.slider("Fascicle Radius (mm)", 0.05, 0.15, 0.08, 0.01)
-    
-    # Conductivity parameters
-    st.sidebar.subheader("Tissue Conductivity (S/m)")
-    epineurium_cond = st.sidebar.number_input("Epineurium", 0.0001, 1.0, 0.1, 0.01, 
-                                            format="%.4f", help="Nerve sheath conductivity")
-    endoneurium_cond = st.sidebar.number_input("Endoneurium", 0.1, 2.0, 0.5, 0.1, 
-                                             format="%.1f", help="Inside fascicles conductivity")
-    perineurium_cond = st.sidebar.number_input("Perineurium", 0.00001, 0.1, 0.001, 0.0001, 
-                                             format="%.5f", help="Fascicle boundary conductivity")
-    outside_cond = st.sidebar.number_input("Outside Nerve", 0.1, 10.0, 0.2, 0.1, 
-                                         format="%.1f", help="Surrounding tissue conductivity")
-    
-    # Electrode parameters
-    st.sidebar.subheader("Electrode Settings")
-    electrode_radius = st.sidebar.slider("Electrode Radius (mm)", 0.01, 0.05, 0.02, 0.005)
-    
-    # Electrode amplitudes
-    st.sidebar.subheader("Electrode Amplitudes (V)")
+    # Electrode amplitudes (always visible)
+    st.sidebar.subheader("⚡ Electrode Amplitudes (V)")
     electrode_1 = st.sidebar.slider("Electrode 1", -2.0, 2.0, 0.0, 0.1)
     electrode_2 = st.sidebar.slider("Electrode 2", -2.0, 2.0, 2.0, 0.1)
     electrode_3 = st.sidebar.slider("Electrode 3", -2.0, 2.0, -2.0, 0.1)
     electrode_4 = st.sidebar.slider("Electrode 4", -2.0, 2.0, -1.0, 0.1)
     
-    # Fiber parameters
-    st.sidebar.subheader("Fiber Settings")
-    fiber_count = st.sidebar.slider("Fibers per Fascicle", 10, 100, 30, 10)
-    fiber_diameter_min = st.sidebar.slider("Min Fiber Diameter (μm)", 1.0, 20.0, 2.0, 0.5)
-    fiber_diameter_max = st.sidebar.slider("Max Fiber Diameter (μm)", 5.0, 25.0, 12.0, 0.5)
-    threshold_base = st.sidebar.number_input("Base Threshold (V)", 0.01, 1.0, 0.1, 0.01, 
-                                           format="%.3f", help="Base activation threshold")
+    # Advanced parameters (collapsible)
+    with st.sidebar.expander("🔧 Advanced Parameters", expanded=False):
+        # Grid parameters
+        st.subheader("Grid Settings")
+        grid_size = st.slider("Grid Resolution", 80, 200, 120, 20, 
+                             help="Higher resolution = more accurate but slower")
+        
+        # Nerve parameters
+        st.subheader("Nerve Geometry")
+        nerve_radius = st.slider("Nerve Radius (mm)", 0.2, 0.6, 0.4, 0.05)
+        fascicle_count = st.slider("Number of Fascicles", 2, 5, 4, 1)
+        fascicle_radius = st.slider("Fascicle Radius (mm)", 0.05, 0.15, 0.1, 0.01)
+        
+        # Conductivity parameters
+        st.subheader("Tissue Conductivity (S/m)")
+        epineurium_cond = st.number_input("Epineurium", 0.0001, 1.0, 0.1, 0.01, 
+                                        format="%.4f", help="Nerve sheath conductivity")
+        endoneurium_cond = st.number_input("Endoneurium", 0.1, 2.0, 0.5, 0.1, 
+                                         format="%.1f", help="Inside fascicles conductivity")
+        perineurium_cond = st.number_input("Perineurium", 0.00001, 0.1, 0.001, 0.0001, 
+                                         format="%.5f", help="Fascicle boundary conductivity")
+        outside_cond = st.number_input("Outside Nerve", 0.1, 10.0, 0.2, 0.1, 
+                                     format="%.1f", help="Surrounding tissue conductivity")
+        
+        # Electrode parameters
+        st.subheader("Electrode Settings")
+        electrode_radius = st.slider("Electrode Radius (mm)", 0.01, 0.05, 0.02, 0.005)
+        
+        # Fiber parameters
+        st.subheader("Fiber Settings")
+        fiber_count = st.slider("Fibers per Fascicle", 10, 100, 30, 10)
+        min_spacing = st.slider("Minimum Spacing (μm)", 0.0, 50.0, 15.0, 0.01, 
+                               help="Minimum spacing between fiber centers")
+        threshold_base = st.number_input("Base Threshold (V)", 0.01, 1.0, 0.1, 0.01, 
+                                       format="%.3f", help="Base activation threshold")
+        
+        # On-target fascicle parameters
+        st.subheader("On-Target Fascicles")
+        on_target_mean = st.slider("Mean Diameter (μm)", 1.0, 16.0, 6.0, 0.5, 
+                                  help="Mean diameter for on-target fascicles")
+        on_target_std = st.slider("Std Deviation (μm)", 0.5, 5.0, 2.0, 0.1, 
+                                 help="Standard deviation for on-target fascicles")
+        
+        # Off-target fascicle parameters
+        st.subheader("Off-Target Fascicles")
+        off_target_mean = st.slider("Mean Diameter (μm)", 1.0, 16.0, 12.0, 0.5, 
+                                   help="Mean diameter for off-target fascicles")
+        off_target_std = st.slider("Std Deviation (μm)", 0.5, 5.0, 2.0, 0.1, 
+                                  help="Standard deviation for off-target fascicles")
     
     return {
         'grid_size': grid_size,
@@ -122,15 +138,80 @@ def create_parameter_sidebar():
         'electrode_radius': electrode_radius,
         'electrode_amplitudes': [electrode_1, electrode_2, electrode_3, electrode_4],
         'fiber_count': fiber_count,
-        'fiber_diameter_range': (fiber_diameter_min, fiber_diameter_max),
-        'threshold_base': threshold_base
+        'min_spacing': min_spacing,
+        'threshold_base': threshold_base,
+        'on_target_mean': on_target_mean,
+        'on_target_std': on_target_std,
+        'off_target_mean': off_target_mean,
+        'off_target_std': off_target_std
     }
 
 def update_simulator_parameters(simulator, params):
     """Update simulator parameters if they've changed."""
-    # This would require modifying the original simulator to accept parameters
-    # For now, we'll use the default parameters and just update electrode amplitudes
-    pass
+    # Check if parameters have changed and rebuild if necessary
+    current_params = getattr(simulator, '_current_params', {})
+    
+    # Parameters that require rebuilding the simulation
+    rebuild_params = [
+        'grid_size', 'nerve_radius', 'fascicle_count', 'fascicle_radius',
+        'epineurium_cond', 'endoneurium_cond', 'perineurium_cond', 'outside_cond',
+        'electrode_radius', 'fiber_count', 'min_spacing', 'threshold_base',
+        'on_target_mean', 'on_target_std', 'off_target_mean', 'off_target_std'
+    ]
+    
+    needs_rebuild = any(
+        current_params.get(param) != params.get(param) 
+        for param in rebuild_params
+    )
+    
+    if needs_rebuild:
+        # Store current parameters
+        simulator._current_params = params.copy()
+        
+        # Rebuild the simulation with new parameters
+        with st.spinner("Rebuilding simulation with new parameters..."):
+            # Update global parameters (this is a bit hacky but works)
+            import nerve_stimulation_simulator as nss
+            
+            # Update the global constants
+            nss.GRID_SIZE = params['grid_size']
+            nss.NERVE_RADIUS = params['nerve_radius']
+            nss.FASCICLE_COUNT = params['fascicle_count']
+            nss.FASCICLE_RADIUS = params['fascicle_radius']
+            nss.CONDUCTIVITY_EPINEURIUM = params['epineurium_cond']
+            nss.CONDUCTIVITY_ENDONEURIUM = params['endoneurium_cond']
+            nss.CONDUCTIVITY_PERINEURIUM = params['perineurium_cond']
+            nss.CONDUCTIVITY_OUTSIDE = params['outside_cond']
+            nss.ELECTRODE_RADIUS = params['electrode_radius']
+            nss.FIBER_COUNT_PER_FASCICLE = params['fiber_count']
+            nss.FIBER_THRESHOLD_BASE = params['threshold_base']
+            
+            # Rebuild the simulator
+            simulator.geometry = nss.NerveGeometry(
+                grid_size=params['grid_size'],
+                domain_size=nss.DOMAIN_SIZE,
+                nerve_center=(nss.NERVE_CENTER_X, nss.NERVE_CENTER_Y),
+                nerve_radius=params['nerve_radius'],
+                fascicle_count=params['fascicle_count'],
+                fascicle_radius=params['fascicle_radius']
+            )
+            simulator.fiber_population = nss.FiberPopulation(
+                fascicle_centers=simulator.geometry.fascicle_centers,
+                fascicle_radius=params['fascicle_radius'],
+                fiber_count_per_fascicle=params['fiber_count'],
+                threshold_base=params['threshold_base'],
+                threshold_scaling=nss.FIBER_THRESHOLD_SCALING,
+                min_spacing=params['min_spacing'],
+                on_target_mean=params['on_target_mean'],
+                on_target_std=params['on_target_std'],
+                off_target_mean=params['off_target_mean'],
+                off_target_std=params['off_target_std']
+            )
+            simulator.solver = nss.LaplaceSolver(
+                simulator.geometry, 
+                nss.ELECTRODE_POSITIONS, 
+                nss.ELECTRODE_RADIUS
+            )
 
 def create_visualization(simulator, electrode_amplitudes):
     """Create the main visualization."""
@@ -148,7 +229,7 @@ def create_visualization(simulator, electrode_amplitudes):
     
     # Plot potential field
     X, Y = simulator.geometry.X, simulator.geometry.Y
-    vmax = max(abs(np.min(potential_field)), abs(np.max(potential_field)))
+    vmax = 1.0  # Fixed voltage bounds at ±1 V
     contour_levels = np.linspace(-vmax, vmax, 21)
     contour_plot = ax.contourf(X, Y, potential_field, levels=contour_levels, 
                               cmap='RdBu_r', alpha=0.7, extend='both', vmin=-vmax, vmax=vmax)
@@ -178,6 +259,16 @@ def create_visualization(simulator, electrode_amplitudes):
     
     # Add grid
     ax.grid(True, alpha=0.3, linewidth=0.5)
+    
+    # Add legend for fiber types
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='green', edgecolor='green', label='On-Target Fascicles'),
+        Patch(facecolor='orange', edgecolor='orange', label='Off-Target Fascicles'),
+        Patch(facecolor='white', edgecolor='black', label='Hollow = Inactive'),
+        Patch(facecolor='black', edgecolor='black', label='Filled = Active')
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
     
     plt.tight_layout()
     return fig
@@ -209,8 +300,8 @@ def draw_nerve_structure(ax, geometry):
         )
         ax.add_patch(perineurium_circle)
     
-    # Draw electrode positions
-    electrode_positions = [(0.7, 0.7), (1.3, 0.7), (0.7, 1.3), (1.3, 1.3)]
+    # Draw electrode positions (clockwise order)
+    electrode_positions = [(0.7, 0.7), (1.3, 0.7), (1.3, 1.3), (0.7, 1.3)]
     for i, pos in enumerate(electrode_positions):
         electrode_circle = patches.Circle(
             pos, ELECTRODE_RADIUS,
@@ -222,23 +313,39 @@ def draw_nerve_structure(ax, geometry):
 
 def plot_fibers(ax, fiber_population):
     """Plot fibers on the specified axis."""
-    # Separate active and inactive fibers
-    active_fibers = [f for f in fiber_population.fibers if f['active']]
-    inactive_fibers = [f for f in fiber_population.fibers if not f['active']]
+    # Separate fibers by type and activation status
+    on_target_active = [f for f in fiber_population.fibers if f['is_on_target'] and f['active']]
+    on_target_inactive = [f for f in fiber_population.fibers if f['is_on_target'] and not f['active']]
+    off_target_active = [f for f in fiber_population.fibers if not f['is_on_target'] and f['active']]
+    off_target_inactive = [f for f in fiber_population.fibers if not f['is_on_target'] and not f['active']]
     
-    # Plot inactive fibers as hollow black circles
-    if inactive_fibers:
-        inactive_positions = np.array([f['position'] for f in inactive_fibers])
-        inactive_sizes = [f['diameter'] * 2 for f in inactive_fibers]
-        ax.scatter(inactive_positions[:, 0], inactive_positions[:, 1], 
-                  c='none', s=inactive_sizes, alpha=0.8, edgecolors='black', linewidth=1.5)
+    # Plot on-target inactive fibers as hollow green circles
+    if on_target_inactive:
+        positions = np.array([f['position'] for f in on_target_inactive])
+        sizes = [f['diameter'] * 2 for f in on_target_inactive]
+        ax.scatter(positions[:, 0], positions[:, 1], 
+                  c='none', s=sizes, alpha=0.8, edgecolors='green', linewidth=1.5)
     
-    # Plot active fibers as filled black circles
-    if active_fibers:
-        active_positions = np.array([f['position'] for f in active_fibers])
-        active_sizes = [f['diameter'] * 2 for f in active_fibers]
-        ax.scatter(active_positions[:, 0], active_positions[:, 1], 
-                  c='black', s=active_sizes, alpha=0.9, edgecolors='black', linewidth=1)
+    # Plot on-target active fibers as filled green circles
+    if on_target_active:
+        positions = np.array([f['position'] for f in on_target_active])
+        sizes = [f['diameter'] * 2 for f in on_target_active]
+        ax.scatter(positions[:, 0], positions[:, 1], 
+                  c='green', s=sizes, alpha=0.9, edgecolors='green', linewidth=1)
+    
+    # Plot off-target inactive fibers as hollow orange circles
+    if off_target_inactive:
+        positions = np.array([f['position'] for f in off_target_inactive])
+        sizes = [f['diameter'] * 2 for f in off_target_inactive]
+        ax.scatter(positions[:, 0], positions[:, 1], 
+                  c='none', s=sizes, alpha=0.8, edgecolors='orange', linewidth=1.5)
+    
+    # Plot off-target active fibers as filled orange circles
+    if off_target_active:
+        positions = np.array([f['position'] for f in off_target_active])
+        sizes = [f['diameter'] * 2 for f in off_target_active]
+        ax.scatter(positions[:, 0], positions[:, 1], 
+                  c='orange', s=sizes, alpha=0.9, edgecolors='orange', linewidth=1)
 
 def main():
     """Main Streamlit application."""
@@ -251,6 +358,9 @@ def main():
     
     # Initialize simulator
     simulator = initialize_simulator()
+    
+    # Update simulator parameters if they've changed
+    update_simulator_parameters(simulator, params)
     
     # Update simulation
     electrode_amplitudes = params['electrode_amplitudes']

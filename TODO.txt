@@ -1,1 +1,2 @@
 enable neumann (current) BC
+def need to add target vs on target
