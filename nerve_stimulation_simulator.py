@@ -22,7 +22,7 @@ import time
 # =============================================================================
 
 # Grid and Domain Parameters
-GRID_SIZE = 100  # Grid resolution (100x100) - reduced for faster computation
+GRID_SIZE = 120  # Grid resolution (120x120) - balanced speed vs accuracy
 DOMAIN_SIZE = 2.0  # Physical domain size in mm
 DX = DOMAIN_SIZE / GRID_SIZE  # Grid spacing
 
@@ -34,21 +34,21 @@ FASCICLE_COUNT = 3  # Number of fascicles
 FASCICLE_RADIUS = 0.08  # Radius of each fascicle (mm)
 
 # Conductivity Parameters (S/m)
-CONDUCTIVITY_EPINEURIUM = 0.01  # Low conductivity - nerve sheath
-CONDUCTIVITY_ENDONEURIUM = 0.5  # High conductivity - inside fascicles
-CONDUCTIVITY_PERINEURIUM = 0.001  # Very low conductivity - fascicle boundaries
-CONDUCTIVITY_OUTSIDE = 1e6  # Perfect conductor - ground boundary
+CONDUCTIVITY_EPINEURIUM = 1/6  # Low conductivity - nerve sheath
+CONDUCTIVITY_ENDONEURIUM = 1/6  # High conductivity - inside fascicles
+CONDUCTIVITY_PERINEURIUM = 0.0008  # Very low conductivity - fascicle boundaries
+CONDUCTIVITY_OUTSIDE = 0.2  # Perfect conductor - ground boundary
 
 # Electrode Parameters
 ELECTRODE_COUNT = 4  # Number of electrodes
 ELECTRODE_RADIUS = 0.02  # Electrode radius (mm)
-ELECTRODE_POSITIONS = [  # Electrode positions (x, y) in mm
-    (0.6, 0.6),   # Electrode 1
-    (1.4, 0.6),   # Electrode 2
-    (0.6, 1.4),   # Electrode 3
-    (1.4, 1.4),   # Electrode 4
+ELECTRODE_POSITIONS = [  # Electrode positions (x, y) in mm - closer to nerve
+    (0.7, 0.7),   # Electrode 1
+    (1.3, 0.7),   # Electrode 2
+    (0.7, 1.3),   # Electrode 3
+    (1.3, 1.3),   # Electrode 4
 ]
-ELECTRODE_AMPLITUDES = [1.0, -1.0, -1.0, 0.0]  # Current amplitudes (mA)
+ELECTRODE_AMPLITUDES = [0, 2, -2, -1]  # Current amplitudes (mA)
 
 # Fiber Parameters
 FIBER_COUNT_PER_FASCICLE = 30  # Number of fibers per fascicle - reduced for faster computation
@@ -119,15 +119,18 @@ class NerveGeometry:
         nerve_mask = self._get_circle_mask(self.nerve_center, self.nerve_radius)
         self.sigma[nerve_mask] = CONDUCTIVITY_EPINEURIUM
         
-        # Add fascicles (endoneurium)
+        # Add fascicles and perineurium
         for center in self.fascicle_centers:
-            fascicle_mask = self._get_circle_mask(center, self.fascicle_radius)
-            self.sigma[fascicle_mask] = CONDUCTIVITY_ENDONEURIUM
-            
-            # Add perineurium (thin boundary around fascicle)
-            perineurium_mask = self._get_circle_mask(center, self.fascicle_radius + 0.01) & \
+            # First add perineurium (outer ring) - grid-aware thickness
+            peri_cells = max(1, int(round(0.02 / self.dx)))  # At least 1 cell thick
+            perineurium_thickness = peri_cells * self.dx
+            perineurium_mask = self._get_circle_mask(center, self.fascicle_radius + perineurium_thickness) & \
                              ~self._get_circle_mask(center, self.fascicle_radius)
             self.sigma[perineurium_mask] = CONDUCTIVITY_PERINEURIUM
+            
+            # Then add fascicle (endoneurium) - this will overwrite perineurium inside fascicle
+            fascicle_mask = self._get_circle_mask(center, self.fascicle_radius)
+            self.sigma[fascicle_mask] = CONDUCTIVITY_ENDONEURIUM
     
     def _get_circle_mask(self, center, radius):
         """Get boolean mask for points inside a circle."""
@@ -137,6 +140,7 @@ class NerveGeometry:
     def get_conductivity(self):
         """Return the conductivity field."""
         return self.sigma
+    
 
 class FiberPopulation:
     """Handles nerve fiber generation and activation."""
@@ -227,92 +231,131 @@ class LaplaceSolver:
         self.grid_size = geometry.grid_size
         self.dx = geometry.dx
         
-        # Build the sparse matrix system once
+        # Build the sparse matrix system
         print("Building sparse matrix system...")
         self.A, self.b_indices = self._build_sparse_system()
         
         # Precompute lead fields for each electrode
         self.lead_fields = self._compute_lead_fields()
+    
         
     def _build_sparse_system(self):
-        """Build the sparse matrix system for the Laplace equation."""
-        n = self.grid_size
+        """Build the sparse matrix system for the Laplace equation using correct variable-σ Laplacian."""
         sigma = self.geometry.get_conductivity()
-        
-        # Precompute electrode masks for efficiency
-        electrode_masks = []
-        for pos in self.electrode_positions:
-            mask = np.zeros((n, n), dtype=bool)
-            for i in range(n):
-                for j in range(n):
-                    if np.sqrt((i*self.dx - pos[0])**2 + (j*self.dx - pos[1])**2) <= ELECTRODE_RADIUS:
-                        mask[i, j] = True
-            electrode_masks.append(mask)
-        
-        # Create mapping from 2D grid to 1D vector
-        def grid_to_vector(i, j):
-            return i * n + j
-        
-        # Build sparse matrix
-        row_indices = []
-        col_indices = []
+        ny, nx = sigma.shape
+        N = ny * nx
+        dx2 = self.dx * self.dx
+
+        print("  Computing harmonic mean conductivities...")
+        # Harmonic means on faces
+        # East/West faces (between j and j+1)
+        sigE = (2 * sigma[:, 1:] * sigma[:, :-1]) / (sigma[:, 1:] + sigma[:, :-1] + 1e-12)
+        sigW = sigE  # same array, used with one-column shift
+
+        # North/South faces (between i and i+1)
+        sigS = (2 * sigma[1:, :] * sigma[:-1, :]) / (sigma[1:, :] + sigma[:-1, :] + 1e-12)
+        sigN = sigS  # same array, used with one-row shift
+
+        print("  Building matrix structure...")
+        # Precompute all indices and data for vectorized assembly
+        # Main diagonal
+        main = np.zeros_like(sigma, dtype=float)
+        main[:, :-1] += sigE / dx2     # to east
+        main[:, 1:]  += sigW / dx2     # to west
+        main[:-1, :] += sigS / dx2     # to south
+        main[1:, :]  += sigN / dx2     # to north
+        main = main.ravel()
+
+        # Create all row/col indices and data at once
+        rows = []
+        cols = []
         data = []
-        b_indices = []
         
-        total_points = n * n
-        processed = 0
+        # Main diagonal
+        for k in range(N):
+            rows.append(k)
+            cols.append(k)
+            data.append(main[k])
         
-        # Process all grid points (including boundaries)
-        for i in range(n):
-            for j in range(n):
-                idx = grid_to_vector(i, j)
-                
-                # Check if this is an electrode point
-                is_electrode = any(mask[i, j] for mask in electrode_masks)
-                
-                if is_electrode:
-                    # Electrode point: phi = amplitude (will be set in RHS)
-                    row_indices.append(idx)
-                    col_indices.append(idx)
-                    data.append(1.0)
-                    b_indices.append(idx)
-                elif i == 0 or i == n-1 or j == 0 or j == n-1:
-                    # Boundary point: phi = 0 (ground boundary)
-                    row_indices.append(idx)
-                    col_indices.append(idx)
-                    data.append(1.0)
-                    b_indices.append(idx)
-                else:
-                    # Interior point: finite difference equation
-                    # σ∇²φ = 0 becomes: σ(φ[i+1,j] + φ[i-1,j] + φ[i,j+1] + φ[i,j-1] - 4φ[i,j]) = 0
-                    
-                    # Center coefficient
-                    row_indices.append(idx)
-                    col_indices.append(idx)
-                    data.append(-4.0 * sigma[i, j])
-                    
-                    # Neighbor coefficients
-                    neighbors = [(i+1, j), (i-1, j), (i, j+1), (i, j-1)]
-                    for ni, nj in neighbors:
-                        if 0 <= ni < n and 0 <= nj < n:
-                            row_indices.append(idx)
-                            col_indices.append(grid_to_vector(ni, nj))
-                            data.append(sigma[i, j])
-                
-                processed += 1
-                if processed % (total_points // 10) == 0:
-                    print(f"  Building matrix: {100*processed//total_points}% complete")
+        # Off-diagonals - vectorized approach
+        # East connections
+        for i in range(ny):
+            for j in range(nx - 1):
+                k = i * nx + j
+                ke = i * nx + (j + 1)
+                rows.append(k)
+                cols.append(ke)
+                data.append(-sigE[i, j] / dx2)
         
+        # West connections
+        for i in range(ny):
+            for j in range(1, nx):
+                k = i * nx + j
+                kw = i * nx + (j - 1)
+                rows.append(k)
+                cols.append(kw)
+                data.append(-sigW[i, j-1] / dx2)
+        
+        # South connections
+        for i in range(ny - 1):
+            for j in range(nx):
+                k = i * nx + j
+                ks = (i + 1) * nx + j
+                rows.append(k)
+                cols.append(ks)
+                data.append(-sigS[i, j] / dx2)
+        
+        # North connections
+        for i in range(1, ny):
+            for j in range(nx):
+                k = i * nx + j
+                kn = (i - 1) * nx + j
+                rows.append(k)
+                cols.append(kn)
+                data.append(-sigN[i-1, j] / dx2)
+
         print("  Creating sparse matrix...")
-        # Create sparse matrix
-        A = csc_matrix((data, (row_indices, col_indices)), 
-                      shape=(n*n, n*n))
+        A = csc_matrix((data, (rows, cols)), shape=(N, N))
+
+        print("  Enforcing Dirichlet boundary conditions...")
+        # Create Dirichlet mask (outer boundary + electrodes)
+        dirichlet_mask = np.zeros((ny, nx), dtype=bool)
         
-        return A, b_indices
+        # Outer boundaries (ground = 0 V)
+        dirichlet_mask[0, :] = True
+        dirichlet_mask[-1, :] = True
+        dirichlet_mask[:, 0] = True
+        dirichlet_mask[:, -1] = True
+        
+        # All electrode pixels are Dirichlet too (we'll set their value in b per solve)
+        X, Y = self.geometry.X, self.geometry.Y
+        for pos in self.electrode_positions:
+            electrode_mask = (X - pos[0])**2 + (Y - pos[1])**2 <= ELECTRODE_RADIUS**2
+            dirichlet_mask |= electrode_mask
+
+        dir_idx = np.where(dirichlet_mask.ravel())[0]
+
+        # Enforce Dirichlet by setting rows to identity; don't touch columns
+        A = A.tolil()
+        for k in dir_idx:
+            A.rows[k] = [k]
+            A.data[k] = [1.0]
+        A = A.tocsc()
+        
+        # Store for debugging
+        self._dirichlet_indices = dir_idx
+        
+        return A, dir_idx
     
     def _compute_lead_fields(self):
         """Precompute unit potential fields for each electrode (lead field method)."""
         lead_fields = []
+        
+        # Debug: Print Dirichlet and electrode info
+        print(f"Dirichlet count (rows forced to identity): {len(self._dirichlet_indices)}")
+        for i, pos in enumerate(self.electrode_positions):
+            mask = (self.geometry.X - pos[0])**2 + (self.geometry.Y - pos[1])**2 <= ELECTRODE_RADIUS**2
+            print(f"Electrode {i+1}: pixels={mask.sum()}")
         
         for i, pos in enumerate(self.electrode_positions):
             print(f"Computing lead field for electrode {i+1}...")
@@ -320,41 +363,41 @@ class LaplaceSolver:
             lead_field = self._solve_laplace_single_electrode(pos, 1.0)
             elapsed = time.time() - start_time
             print(f"  Lead field {i+1} computed in {elapsed:.2f} seconds")
+            print(f"  Lead field {i+1} min/max: {lead_field.min():.6f} / {lead_field.max():.6f}")
             lead_fields.append(lead_field)
         
         return lead_fields
     
     def _solve_laplace_single_electrode(self, electrode_pos, amplitude):
         """Solve Laplace equation for a single electrode with unit amplitude."""
-        n = self.grid_size
+        # Create RHS vector (all zeros by default)
+        b = np.zeros(self.A.shape[0])
         
-        # Create RHS vector
-        b = np.zeros(n * n)
+        # Set electrode boundary condition efficiently (vectorized)
+        X, Y = self.geometry.X, self.geometry.Y
+        electrode_mask = (X - electrode_pos[0])**2 + (Y - electrode_pos[1])**2 <= ELECTRODE_RADIUS**2
+        elec_idx = np.where(electrode_mask.flatten())[0]
         
-        # Set electrode boundary condition efficiently
-        electrode_mask = np.zeros((n, n), dtype=bool)
-        for i in range(n):
-            for j in range(n):
-                if np.sqrt((i*self.dx - electrode_pos[0])**2 + (j*self.dx - electrode_pos[1])**2) <= ELECTRODE_RADIUS:
-                    electrode_mask[i, j] = True
+        # Debug safety: make sure we have some nodes!
+        assert elec_idx.size > 0, f"No grid nodes fell inside electrode at {electrode_pos}. " \
+                                  f"Increase ELECTRODE_RADIUS or grid resolution."
         
-        # Set boundary conditions
-        electrode_indices = np.where(electrode_mask.flatten())[0]
-        b[electrode_indices] = amplitude
+        # Set electrode potential (ground nodes remain 0.0)
+        b[elec_idx] = amplitude
         
-        # Set ground boundary conditions (phi = 0 at boundaries)
-        for i in range(n):
-            for j in range(n):
-                if i == 0 or i == n-1 or j == 0 or j == n-1:
-                    if not electrode_mask[i, j]:  # Don't override electrode conditions
-                        idx = i * n + j
-                        b[idx] = 0.0
+        # Debug: Check RHS
+        print(f"  RHS non-zero entries: {np.count_nonzero(b)}")
+        print(f"  RHS range: {b.min():.6f} to {b.max():.6f}")
         
         # Solve sparse system
         phi_vector = spsolve(self.A, b)
         
+        # Debug: Check solution
+        print(f"  Solution range: {phi_vector.min():.6f} to {phi_vector.max():.6f}")
+        print(f"  Solution non-zero entries: {np.count_nonzero(phi_vector)}")
+        
         # Reshape to 2D grid
-        phi = phi_vector.reshape((n, n))
+        phi = phi_vector.reshape(self.geometry.get_conductivity().shape)
         
         return phi
     
@@ -413,21 +456,33 @@ class NerveStimulationSimulator:
     
     def setup_visualization(self):
         """Setup matplotlib visualization."""
-        self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        self.fig, ((self.ax1, self.ax2), (self.ax3, self.ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         
-        # Left plot: Potential field and nerve structure
-        self.ax1.set_title('Nerve Cross-Section with Potential Field')
+        # Top left: Potential field and nerve structure
+        self.ax1.set_title('Potential Field with Fiber Activation')
         self.ax1.set_xlabel('X (mm)')
         self.ax1.set_ylabel('Y (mm)')
         self.ax1.set_aspect('equal')
         
-        # Right plot: Activation statistics
-        self.ax2.set_title('Activation Statistics')
-        self.ax2.set_xlabel('Fascicle')
-        self.ax2.set_ylabel('Activation Percentage (%)')
+        # Top right: Conductivity field
+        self.ax2.set_title('Conductivity Field')
+        self.ax2.set_xlabel('X (mm)')
+        self.ax2.set_ylabel('Y (mm)')
+        self.ax2.set_aspect('equal')
         
-        # Draw nerve structure
+        # Bottom left: Activation statistics
+        self.ax3.set_title('Activation Statistics by Fascicle')
+        self.ax3.set_xlabel('Fascicle')
+        self.ax3.set_ylabel('Activation Percentage (%)')
+        
+        # Bottom right: Potential field cross-section
+        self.ax4.set_title('Potential Field Cross-Section')
+        self.ax4.set_xlabel('Distance (mm)')
+        self.ax4.set_ylabel('Potential (V)')
+        
+        # Draw nerve structure on both top plots
         self._draw_nerve_structure()
+        self._draw_nerve_structure_conductivity()
         
         plt.tight_layout()
     
@@ -440,13 +495,23 @@ class NerveStimulationSimulator:
         )
         self.ax1.add_patch(nerve_circle)
         
-        # Draw fascicle boundaries
+        # Draw fascicle boundaries and perineurium
         for center in self.geometry.fascicle_centers:
+            # Fascicle boundary
             fascicle_circle = patches.Circle(
                 center, FASCICLE_RADIUS,
                 fill=False, edgecolor='gray', linewidth=1
             )
             self.ax1.add_patch(fascicle_circle)
+            
+            # Perineurium boundary (grid-aware thickness)
+            peri_cells = max(1, int(round(0.02 / self.geometry.dx)))
+            perineurium_thickness = peri_cells * self.geometry.dx
+            perineurium_circle = patches.Circle(
+                center, FASCICLE_RADIUS + perineurium_thickness,
+                fill=False, edgecolor='darkgray', linewidth=2, linestyle='--'
+            )
+            self.ax1.add_patch(perineurium_circle)
         
         # Draw electrode positions
         for i, pos in enumerate(ELECTRODE_POSITIONS):
@@ -456,6 +521,43 @@ class NerveStimulationSimulator:
             )
             self.ax1.add_patch(electrode_circle)
             self.ax1.text(pos[0], pos[1], f'E{i+1}', ha='center', va='center', 
+                         color='white', fontsize=8, fontweight='bold')
+    
+    def _draw_nerve_structure_conductivity(self):
+        """Draw nerve and fascicle boundaries for conductivity plot."""
+        # Draw nerve boundary
+        nerve_circle = patches.Circle(
+            (NERVE_CENTER_X, NERVE_CENTER_Y), NERVE_RADIUS,
+            fill=False, edgecolor='black', linewidth=2
+        )
+        self.ax2.add_patch(nerve_circle)
+        
+        # Draw fascicle boundaries and perineurium
+        for center in self.geometry.fascicle_centers:
+            # Fascicle boundary
+            fascicle_circle = patches.Circle(
+                center, FASCICLE_RADIUS,
+                fill=False, edgecolor='white', linewidth=1
+            )
+            self.ax2.add_patch(fascicle_circle)
+            
+            # Perineurium boundary (grid-aware thickness)
+            peri_cells = max(1, int(round(0.02 / self.geometry.dx)))
+            perineurium_thickness = peri_cells * self.geometry.dx
+            perineurium_circle = patches.Circle(
+                center, FASCICLE_RADIUS + perineurium_thickness,
+                fill=False, edgecolor='white', linewidth=2, linestyle='--'
+            )
+            self.ax2.add_patch(perineurium_circle)
+        
+        # Draw electrode positions
+        for i, pos in enumerate(ELECTRODE_POSITIONS):
+            electrode_circle = patches.Circle(
+                pos, ELECTRODE_RADIUS,
+                fill=True, color='red', alpha=0.8
+            )
+            self.ax2.add_patch(electrode_circle)
+            self.ax2.text(pos[0], pos[1], f'E{i+1}', ha='center', va='center', 
                          color='white', fontsize=8, fontweight='bold')
     
     def update_simulation(self, electrode_amplitudes):
@@ -475,60 +577,87 @@ class NerveStimulationSimulator:
     
     def _update_visualization(self, potential_field):
         """Update visualization with current state."""
-        # Clear the left plot
+        # Clear all plots
         self.ax1.clear()
+        self.ax2.clear()
+        self.ax3.clear()
+        self.ax4.clear()
         
-        # Redraw nerve structure
-        self._draw_nerve_structure()
-        
-        # Plot potential field with contour lines
+        # Set up plot properties
         X, Y = self.geometry.X, self.geometry.Y
         
-        # Create contour plot of potential field
-        contour_levels = np.linspace(np.min(potential_field), np.max(potential_field), 20)
+        # Panel 1: Potential field with fiber activation
+        self.ax1.set_title('Potential Field with Fiber Activation')
+        self.ax1.set_xlabel('X (mm)')
+        self.ax1.set_ylabel('Y (mm)')
+        self.ax1.set_aspect('equal')
+        
+        # Create contour plot of potential field with symmetric levels around 0
+        vmax = max(abs(np.min(potential_field)), abs(np.max(potential_field)))
+        contour_levels = np.linspace(-vmax, vmax, 21)  # 21 levels to include 0
         contour_plot = self.ax1.contourf(X, Y, potential_field, levels=contour_levels, 
-                                        cmap='RdBu_r', alpha=0.7, extend='both')
+                                        cmap='RdBu_r', alpha=0.7, extend='both', vmin=-vmax, vmax=vmax)
         
         # Add contour lines for better visualization
         contour_lines = self.ax1.contour(X, Y, potential_field, levels=10, 
                                         colors='black', alpha=0.3, linewidths=0.5)
         
         # Add colorbar
-        cbar = plt.colorbar(contour_plot, ax=self.ax1, shrink=0.8)
-        cbar.set_label('Potential (V)', rotation=270, labelpad=20)
+        cbar1 = plt.colorbar(contour_plot, ax=self.ax1, shrink=0.8)
+        cbar1.set_label('Potential (V)', rotation=270, labelpad=20)
+        
+        # Draw nerve structure
+        self._draw_nerve_structure()
         
         # Update fiber positions and colors
-        fiber_positions = np.array([f['position'] for f in self.fiber_population.fibers])
-        fiber_colors = ['red' if f['active'] else 'black' for f in self.fiber_population.fibers]
-        fiber_sizes = [f['diameter'] * 2 for f in self.fiber_population.fibers]  # Size by diameter
+        self._plot_fibers(self.ax1)
         
-        self.ax1.scatter(fiber_positions[:, 0], fiber_positions[:, 1], 
-                        c=fiber_colors, s=fiber_sizes, alpha=0.8, edgecolors='white', linewidth=0.5)
+        # Panel 2: Conductivity field
+        self.ax2.set_title('Conductivity Field')
+        self.ax2.set_xlabel('X (mm)')
+        self.ax2.set_ylabel('Y (mm)')
+        self.ax2.set_aspect('equal')
         
-        # Set plot properties
-        self.ax1.set_title('Nerve Cross-Section with Potential Field')
-        self.ax1.set_xlabel('X (mm)')
-        self.ax1.set_ylabel('Y (mm)')
-        self.ax1.set_aspect('equal')
-        self.ax1.grid(True, alpha=0.3)
+        # Plot conductivity field
+        sigma = self.geometry.get_conductivity()
         
-        # Update statistics
+        # Debug: Print conductivity values
+        print(f"Conductivity values:")
+        print(f"  Epineurium: {CONDUCTIVITY_EPINEURIUM} S/m")
+        print(f"  Endoneurium: {CONDUCTIVITY_ENDONEURIUM} S/m") 
+        print(f"  Perineurium: {CONDUCTIVITY_PERINEURIUM} S/m")
+        print(f"  Outside: {CONDUCTIVITY_OUTSIDE} S/m")
+        print(f"  Actual sigma range: {np.min(sigma):.2e} to {np.max(sigma):.2e} S/m")
+        
+        # Use log scale for better visualization of conductivity differences
+        sigma_log = np.log10(sigma + 1e-10)  # Add small value to avoid log(0)
+        conductivity_plot = self.ax2.imshow(sigma_log, extent=[0, DOMAIN_SIZE, 0, DOMAIN_SIZE], 
+                                          cmap='viridis', alpha=0.8, origin='lower')
+        
+        # Add colorbar for conductivity (log scale)
+        cbar2 = plt.colorbar(conductivity_plot, ax=self.ax2, shrink=0.8)
+        cbar2.set_label('Log10(Conductivity) (S/m)', rotation=270, labelpad=20)
+        
+        # Draw nerve structure
+        self._draw_nerve_structure_conductivity()
+        
+        # Panel 3: Activation statistics
+        self.ax3.set_title('Activation Statistics by Fascicle')
+        self.ax3.set_xlabel('Fascicle')
+        self.ax3.set_ylabel('Activation Percentage (%)')
+        
         stats = self.fiber_population.get_activation_stats()
         fascicles = list(stats.keys())
         percentages = [stats[f]['percentage'] for f in fascicles]
         
-        self.ax2.clear()
-        bars = self.ax2.bar(fascicles, percentages, color='skyblue', alpha=0.7, edgecolor='navy', linewidth=1)
-        self.ax2.set_title('Activation Statistics')
-        self.ax2.set_xlabel('Fascicle')
-        self.ax2.set_ylabel('Activation Percentage (%)')
-        self.ax2.set_ylim(0, 100)
-        self.ax2.grid(True, alpha=0.3, axis='y')
+        bars = self.ax3.bar(fascicles, percentages, color='skyblue', alpha=0.7, edgecolor='navy', linewidth=1)
+        self.ax3.set_ylim(0, 100)
+        self.ax3.grid(True, alpha=0.3, axis='y')
         
         # Add percentage labels on bars
         for i, (bar, pct) in enumerate(zip(bars, percentages)):
             height = bar.get_height()
-            self.ax2.text(bar.get_x() + bar.get_width()/2., height + 1,
+            self.ax3.text(bar.get_x() + bar.get_width()/2., height + 1,
                          f'{pct:.1f}%', ha='center', va='bottom', fontweight='bold')
         
         # Add total statistics
@@ -536,12 +665,47 @@ class NerveStimulationSimulator:
         total_active = sum(stats[f]['active'] for f in fascicles)
         total_percentage = (total_active / total_fibers * 100) if total_fibers > 0 else 0
         
-        self.ax2.text(0.02, 0.98, f'Total: {total_active}/{total_fibers} fibers ({total_percentage:.1f}%)',
-                     transform=self.ax2.transAxes, va='top', ha='left',
+        self.ax3.text(0.02, 0.98, f'Total: {total_active}/{total_fibers} fibers ({total_percentage:.1f}%)',
+                     transform=self.ax3.transAxes, va='top', ha='left',
                      bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+        
+        # Panel 4: Potential field cross-section
+        self.ax4.set_title('Potential Field Cross-Section')
+        self.ax4.set_xlabel('Distance (mm)')
+        self.ax4.set_ylabel('Potential (V)')
+        
+        # Plot cross-section through center
+        center_y = GRID_SIZE // 2
+        cross_section = potential_field[center_y, :]
+        x_coords = np.linspace(0, DOMAIN_SIZE, GRID_SIZE)
+        
+        self.ax4.plot(x_coords, cross_section, 'b-', linewidth=2, label='Potential')
+        self.ax4.axhline(y=0, color='k', linestyle='--', alpha=0.5, label='Zero potential')
+        self.ax4.grid(True, alpha=0.3)
+        self.ax4.legend()
         
         plt.tight_layout()
         plt.draw()
+    
+    def _plot_fibers(self, ax):
+        """Plot fibers on the specified axis."""
+        # Separate active and inactive fibers
+        active_fibers = [f for f in self.fiber_population.fibers if f['active']]
+        inactive_fibers = [f for f in self.fiber_population.fibers if not f['active']]
+        
+        # Plot inactive fibers as hollow black circles
+        if inactive_fibers:
+            inactive_positions = np.array([f['position'] for f in inactive_fibers])
+            inactive_sizes = [f['diameter'] * 2 for f in inactive_fibers]
+            ax.scatter(inactive_positions[:, 0], inactive_positions[:, 1], 
+                      c='none', s=inactive_sizes, alpha=0.8, edgecolors='black', linewidth=1.5)
+        
+        # Plot active fibers as filled black circles
+        if active_fibers:
+            active_positions = np.array([f['position'] for f in active_fibers])
+            active_sizes = [f['diameter'] * 2 for f in active_fibers]
+            ax.scatter(active_positions[:, 0], active_positions[:, 1], 
+                      c='black', s=active_sizes, alpha=0.9, edgecolors='black', linewidth=1)
     
     def run_simulation(self):
         """Run the main simulation."""
