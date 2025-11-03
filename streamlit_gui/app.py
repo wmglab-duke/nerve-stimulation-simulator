@@ -321,18 +321,18 @@ def create_visualization(simulator, electrode_amplitudes, electrode_type="Curren
     legend_handles = []
     legend_labels = []
     
-    # On Target: show two colored border circles (blue and green)
+    # On Target: show two colored border circles (yellow and green)
     on_target_borders = (
-        Circle((0, 0), 0.03, fill=False, edgecolor='#0053b2', linewidth=3),
+        Circle((0, 0), 0.03, fill=False, edgecolor='#f2ef30', linewidth=3),
         Circle((0, 0), 0.03, fill=False, edgecolor='#7fe74e', linewidth=3)
     )
     legend_handles.append(on_target_borders)
     legend_labels.append('On Target')
     
-    # Off Target: show two colored border circles (red and yellow)
+    # Off Target: show two colored border circles (red and blue)
     off_target_borders = (
         Circle((0, 0), 0.03, fill=False, edgecolor='#c60000', linewidth=3),
-        Circle((0, 0), 0.03, fill=False, edgecolor='#f2ef30', linewidth=3)
+        Circle((0, 0), 0.03, fill=False, edgecolor='#0053b2', linewidth=3)
     )
     legend_handles.append(off_target_borders)
     legend_labels.append('Off Target')
@@ -366,8 +366,8 @@ def draw_nerve_structure(ax, geometry, electrode_type="Current (4 Discrete)"):
     )
     ax.add_patch(nerve_circle)
     
-    # Fascicle colors: blue, green (on-target), red, yellow (off-target)
-    fascicle_colors = ['#0053b2', '#7fe74e', '#c60000', '#f2ef30']
+    # Fascicle colors: yellow, green (on-target), red, blue (off-target)
+    fascicle_colors = ['#f2ef30', '#7fe74e', '#c60000', '#0053b2']
     
     # Draw fascicle boundaries with thick colored line between two thin black lines
     fascicle_radius = geometry.fascicle_radius  # Use the actual radius from geometry
