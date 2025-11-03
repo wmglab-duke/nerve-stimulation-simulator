@@ -61,20 +61,38 @@ st.markdown("""
 def initialize_simulator():
     """Initialize the simulator with current parameters."""
     if 'simulator' not in st.session_state:
-        with st.spinner("Initializing simulator..."):
-            st.session_state.simulator = NerveStimulationSimulator()
+        try:
+            with st.spinner("Initializing simulator..."):
+                st.session_state.simulator = NerveStimulationSimulator()
+        except Exception as e:
+            st.error(f"Failed to initialize simulator: {e}")
+            st.stop()
     return st.session_state.simulator
 
 def create_parameter_sidebar():
     """Create the parameter control sidebar."""
     st.sidebar.header("🧠 Simulation Parameters")
     
+    # Electrode type selector
+    st.sidebar.subheader("🔌 Electrode Configuration")
+    electrode_type = st.sidebar.selectbox(
+        "Electrode Type",
+        ["Current (4 Discrete)", "Ring (Surrounding)"],
+        help="Choose between discrete electrodes or a ring electrode surrounding the nerve"
+    )
+    
     # Electrode amplitudes (always visible)
     st.sidebar.subheader("⚡ Electrode Amplitudes (V)")
-    electrode_1 = st.sidebar.slider("Electrode 1", -2.0, 2.0, 0.0, 0.1)
-    electrode_2 = st.sidebar.slider("Electrode 2", -2.0, 2.0, 2.0, 0.1)
-    electrode_3 = st.sidebar.slider("Electrode 3", -2.0, 2.0, -2.0, 0.1)
-    electrode_4 = st.sidebar.slider("Electrode 4", -2.0, 2.0, -1.0, 0.1)
+    
+    if electrode_type == "Current (4 Discrete)":
+        electrode_1 = st.sidebar.slider("Electrode 1", -2.0, 2.0, 0.0, 0.1)
+        electrode_2 = st.sidebar.slider("Electrode 2", -2.0, 2.0, 2.0, 0.1)
+        electrode_3 = st.sidebar.slider("Electrode 3", -2.0, 2.0, -2.0, 0.1)
+        electrode_4 = st.sidebar.slider("Electrode 4", -2.0, 2.0, -1.0, 0.1)
+        electrode_amplitudes = [electrode_1, electrode_2, electrode_3, electrode_4]
+    else:  # Ring electrode
+        ring_amplitude = st.sidebar.slider("Ring Electrode", -2.0, 2.0, -1.0, 0.1)
+        electrode_amplitudes = [ring_amplitude]  # Single amplitude for ring
     
     # Advanced parameters (collapsible)
     with st.sidebar.expander("🔧 Advanced Parameters", expanded=False):
@@ -109,8 +127,8 @@ def create_parameter_sidebar():
         fiber_count = st.slider("Fibers per Fascicle", 10, 100, 30, 10)
         min_spacing = st.slider("Minimum Spacing (μm)", 0.0, 50.0, 15.0, 0.01, 
                                help="Minimum spacing between fiber centers")
-        threshold_base = st.number_input("Base Threshold (V)", 0.01, 1.0, 0.1, 0.01, 
-                                       format="%.3f", help="Base activation threshold")
+        threshold_base = st.number_input("Base Threshold (V)", 0.1, 5.0, 0.7, 0.1, 
+                                       format="%.3f", help="Magnitude of cathodic stimulation needed for activation")
         
         # On-target fascicle parameters
         st.subheader("On-Target Fascicles")
@@ -127,6 +145,7 @@ def create_parameter_sidebar():
                                   help="Standard deviation for off-target fascicles")
     
     return {
+        'electrode_type': electrode_type,
         'grid_size': grid_size,
         'nerve_radius': nerve_radius,
         'fascicle_count': fascicle_count,
@@ -136,7 +155,7 @@ def create_parameter_sidebar():
         'perineurium_cond': perineurium_cond,
         'outside_cond': outside_cond,
         'electrode_radius': electrode_radius,
-        'electrode_amplitudes': [electrode_1, electrode_2, electrode_3, electrode_4],
+        'electrode_amplitudes': electrode_amplitudes,
         'fiber_count': fiber_count,
         'min_spacing': min_spacing,
         'threshold_base': threshold_base,
@@ -153,7 +172,7 @@ def update_simulator_parameters(simulator, params):
     
     # Parameters that require rebuilding the simulation
     rebuild_params = [
-        'grid_size', 'nerve_radius', 'fascicle_count', 'fascicle_radius',
+        'electrode_type', 'grid_size', 'nerve_radius', 'fascicle_count', 'fascicle_radius',
         'epineurium_cond', 'endoneurium_cond', 'perineurium_cond', 'outside_cond',
         'electrode_radius', 'fiber_count', 'min_spacing', 'threshold_base',
         'on_target_mean', 'on_target_std', 'off_target_mean', 'off_target_std'
@@ -169,9 +188,10 @@ def update_simulator_parameters(simulator, params):
         simulator._current_params = params.copy()
         
         # Rebuild the simulation with new parameters
-        with st.spinner("Rebuilding simulation with new parameters..."):
-            # Update global parameters (this is a bit hacky but works)
-            import nerve_stimulation_simulator as nss
+        try:
+            with st.spinner("Rebuilding simulation with new parameters..."):
+                # Update global parameters (this is a bit hacky but works)
+                import nerve_stimulation_simulator as nss
             
             # Update the global constants
             nss.GRID_SIZE = params['grid_size']
@@ -207,49 +227,83 @@ def update_simulator_parameters(simulator, params):
                 off_target_mean=params['off_target_mean'],
                 off_target_std=params['off_target_std']
             )
+            # Get electrode positions based on type
+            if params['electrode_type'] == "Current (4 Discrete)":
+                electrode_positions = nss.ELECTRODE_POSITIONS
+            else:  # Ring electrode
+                # Create ring electrode positions around the nerve
+                nerve_center = (nss.NERVE_CENTER_X, nss.NERVE_CENTER_Y)
+                ring_radius = nss.NERVE_RADIUS + 0.1  # Ring slightly outside nerve
+                num_ring_electrodes = 8  # Reduced number of points for better performance
+                electrode_positions = []
+                for i in range(num_ring_electrodes):
+                    angle = 2 * np.pi * i / num_ring_electrodes
+                    x = nerve_center[0] + ring_radius * np.cos(angle)
+                    y = nerve_center[1] + ring_radius * np.sin(angle)
+                    electrode_positions.append((x, y))
+            
             simulator.solver = nss.LaplaceSolver(
                 simulator.geometry, 
-                nss.ELECTRODE_POSITIONS, 
+                electrode_positions, 
                 nss.ELECTRODE_RADIUS
             )
+        except Exception as e:
+            st.error(f"Failed to rebuild simulation: {e}")
+            st.warning("Reverting to previous parameters...")
+            # Restore previous parameters
+            simulator._current_params = current_params
 
-def create_visualization(simulator, electrode_amplitudes):
+def create_visualization(simulator, electrode_amplitudes, electrode_type="Current (4 Discrete)"):
     """Create the main visualization."""
-    # Update simulation with current electrode amplitudes
-    potential_field = simulator.update_simulation(electrode_amplitudes)
+    try:
+        # Update simulation with current electrode amplitudes
+        potential_field = simulator.update_simulation(electrode_amplitudes)
+    except Exception as e:
+        st.error(f"Simulation failed: {e}")
+        return None
     
     # Create single figure focused on the nerve
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     
     # Set title
     ax.set_title('Nerve Stimulation Simulation', fontsize=16, fontweight='bold', pad=20)
-    ax.set_xlabel('X (mm)', fontsize=12)
-    ax.set_ylabel('Y (mm)', fontsize=12)
     ax.set_aspect('equal')
     
-    # Plot potential field
+    # Remove axis labels and ticks for cleaner look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    
+    # Plot intensity field with managua colormap
     X, Y = simulator.geometry.X, simulator.geometry.Y
-    vmax = 1.0  # Fixed voltage bounds at ±1 V
+    intensity_field = np.abs(potential_field)  # Use absolute value for intensity
+    # Apply sign back to show direction
+    signed_intensity = np.sign(potential_field) * intensity_field
+    vmax = 1.0  # Fixed intensity bounds
+    
+    # Use managua colormap directly (flipped)
+    cmap = plt.get_cmap('managua').reversed()
+    
     contour_levels = np.linspace(-vmax, vmax, 21)
-    contour_plot = ax.contourf(X, Y, potential_field, levels=contour_levels, 
-                              cmap='RdBu_r', alpha=0.7, extend='both', vmin=-vmax, vmax=vmax)
+    contour_plot = ax.contourf(X, Y, signed_intensity, levels=contour_levels, 
+                              cmap=cmap, alpha=0.7, extend='both', vmin=-vmax, vmax=vmax)
     
-    # Add contour lines
-    ax.contour(X, Y, potential_field, levels=10, colors='black', alpha=0.3, linewidths=0.5)
-    
-    # Add colorbar
-    cbar = plt.colorbar(contour_plot, ax=ax, shrink=0.8, pad=0.02)
-    cbar.set_label('Potential (V)', rotation=270, labelpad=20, fontsize=12)
+    # Add colorbar with zero tick and plus/minus labels
+    cbar = plt.colorbar(contour_plot, ax=ax, shrink=0.8, pad=0.02, ticks=[-1, 0, 1])
+    cbar.set_ticklabels(['-', '0', '+'])
+    cbar.ax.tick_params(labelsize=14)
+    cbar.set_label('Intensity', rotation=270, labelpad=20, fontsize=12)
     
     # Draw nerve structure
-    draw_nerve_structure(ax, simulator.geometry)
+    draw_nerve_structure(ax, simulator.geometry, electrode_type)
     
     # Plot fibers
     plot_fibers(ax, simulator.fiber_population)
     
-    # Zoom in on the nerve area
-    nerve_center_x, nerve_center_y = NERVE_CENTER_X, NERVE_CENTER_Y
-    nerve_radius = NERVE_RADIUS
+    # Zoom in on the nerve area - use geometry values
+    nerve_center_x, nerve_center_y = simulator.geometry.nerve_center
+    nerve_radius = simulator.geometry.nerve_radius
     zoom_margin = 0.3  # Add some margin around the nerve
     
     ax.set_xlim(nerve_center_x - nerve_radius - zoom_margin, 
@@ -257,95 +311,135 @@ def create_visualization(simulator, electrode_amplitudes):
     ax.set_ylim(nerve_center_y - nerve_radius - zoom_margin, 
                 nerve_center_y + nerve_radius + zoom_margin)
     
-    # Add grid
-    ax.grid(True, alpha=0.3, linewidth=0.5)
+    # Grid removed for cleaner visualization
     
-    # Add legend for fiber types
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='green', edgecolor='green', label='On-Target Fascicles'),
-        Patch(facecolor='orange', edgecolor='orange', label='Off-Target Fascicles'),
-        Patch(facecolor='white', edgecolor='black', label='Hollow = Inactive'),
-        Patch(facecolor='black', edgecolor='black', label='Filled = Active')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+    # Add legend with separate entries for borders and fiber states
+    import matplotlib.lines as mlines
+    from matplotlib.legend_handler import HandlerTuple
+    from matplotlib.patches import Circle
+    
+    legend_handles = []
+    legend_labels = []
+    
+    # On Target: show two colored border circles (blue and green)
+    on_target_borders = (
+        Circle((0, 0), 0.03, fill=False, edgecolor='#0053b2', linewidth=3),
+        Circle((0, 0), 0.03, fill=False, edgecolor='#7fe74e', linewidth=3)
+    )
+    legend_handles.append(on_target_borders)
+    legend_labels.append('On Target')
+    
+    # Off Target: show two colored border circles (red and yellow)
+    off_target_borders = (
+        Circle((0, 0), 0.03, fill=False, edgecolor='#c60000', linewidth=3),
+        Circle((0, 0), 0.03, fill=False, edgecolor='#f2ef30', linewidth=3)
+    )
+    legend_handles.append(off_target_borders)
+    legend_labels.append('Off Target')
+    
+    # Active Fiber: black filled circle
+    active_fiber = mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor='black', 
+                                 markeredgecolor='black', markersize=8, linestyle='None')
+    legend_handles.append(active_fiber)
+    legend_labels.append('Active Fiber')
+    
+    # Inactive Fiber: black hollow circle
+    inactive_fiber = mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor='none', 
+                                   markeredgecolor='black', markersize=8, markeredgewidth=1, linestyle='None')
+    legend_handles.append(inactive_fiber)
+    legend_labels.append('Inactive Fiber')
+    
+    # Create legend with tuple handler for the border pairs
+    legend = ax.legend(legend_handles, legend_labels,
+                      handler_map={tuple: HandlerTuple(ndivide=None)},
+                      loc='upper right', fontsize=8)
     
     plt.tight_layout()
     return fig
 
-def draw_nerve_structure(ax, geometry):
+def draw_nerve_structure(ax, geometry, electrode_type="Current (4 Discrete)"):
     """Draw nerve and fascicle boundaries."""
-    # Draw nerve boundary
+    # Draw nerve boundary - use geometry values to ensure consistency
     nerve_circle = patches.Circle(
-        (NERVE_CENTER_X, NERVE_CENTER_Y), NERVE_RADIUS,
+        geometry.nerve_center, geometry.nerve_radius,
         fill=False, edgecolor='black', linewidth=2
     )
     ax.add_patch(nerve_circle)
     
-    # Draw fascicle boundaries and perineurium
-    for center in geometry.fascicle_centers:
-        # Fascicle boundary
-        fascicle_circle = patches.Circle(
-            center, FASCICLE_RADIUS,
-            fill=False, edgecolor='gray', linewidth=1
-        )
-        ax.add_patch(fascicle_circle)
-        
-        # Perineurium boundary
-        peri_cells = max(1, int(round(0.02 / geometry.dx)))
-        perineurium_thickness = peri_cells * geometry.dx
-        perineurium_circle = patches.Circle(
-            center, FASCICLE_RADIUS + perineurium_thickness,
-            fill=False, edgecolor='darkgray', linewidth=2, linestyle='--'
-        )
-        ax.add_patch(perineurium_circle)
+    # Fascicle colors: blue, green (on-target), red, yellow (off-target)
+    fascicle_colors = ['#0053b2', '#7fe74e', '#c60000', '#f2ef30']
     
-    # Draw electrode positions (clockwise order)
-    electrode_positions = [(0.7, 0.7), (1.3, 0.7), (1.3, 1.3), (0.7, 1.3)]
-    for i, pos in enumerate(electrode_positions):
-        electrode_circle = patches.Circle(
-            pos, ELECTRODE_RADIUS,
-            fill=True, color='red', alpha=0.8
+    # Draw fascicle boundaries with thick colored line between two thin black lines
+    fascicle_radius = geometry.fascicle_radius  # Use the actual radius from geometry
+    for fascicle_idx, center in enumerate(geometry.fascicle_centers):
+        color = fascicle_colors[fascicle_idx % len(fascicle_colors)]
+        
+        # Outer thin black line
+        outer_black = patches.Circle(
+            center, fascicle_radius + 0.01,
+            fill=False, edgecolor='black', linewidth=1
         )
-        ax.add_patch(electrode_circle)
-        ax.text(pos[0], pos[1], f'E{i+1}', ha='center', va='center', 
-               color='white', fontsize=8, fontweight='bold')
+        ax.add_patch(outer_black)
+        
+        # Middle thick colored line
+        colored_line = patches.Circle(
+            center, fascicle_radius,
+            fill=False, edgecolor=color, linewidth=3
+        )
+        ax.add_patch(colored_line)
+        
+        # Inner thin black line
+        inner_black = patches.Circle(
+            center, fascicle_radius - 0.01,
+            fill=False, edgecolor='black', linewidth=1
+        )
+        ax.add_patch(inner_black)
+    
+    # Draw electrode positions based on type
+    if electrode_type == "Current (4 Discrete)":
+        # Draw discrete electrodes (clockwise order)
+        electrode_positions = [(0.7, 0.7), (1.3, 0.7), (1.3, 1.3), (0.7, 1.3)]
+        for i, pos in enumerate(electrode_positions):
+            electrode_circle = patches.Circle(
+                pos, ELECTRODE_RADIUS,
+                fill=True, color='red', alpha=0.8
+            )
+            ax.add_patch(electrode_circle)
+            ax.text(pos[0], pos[1], f'E{i+1}', ha='center', va='center', 
+                   color='white', fontsize=8, fontweight='bold')
+    else:  # Ring electrode
+        # Draw ring electrode around the nerve - use geometry values
+        nerve_center = geometry.nerve_center
+        ring_radius = geometry.nerve_radius + 0.1  # Ring slightly outside nerve
+        ring_circle = patches.Circle(
+            nerve_center, ring_radius,
+            fill=False, edgecolor='red', linewidth=3, alpha=0.8
+        )
+        ax.add_patch(ring_circle)
+        ax.text(nerve_center[0], nerve_center[1] + ring_radius + 0.05, 
+               'Ring Electrode', ha='center', va='bottom', 
+               color='red', fontsize=10, fontweight='bold')
 
 def plot_fibers(ax, fiber_population):
     """Plot fibers on the specified axis."""
-    # Separate fibers by type and activation status
-    on_target_active = [f for f in fiber_population.fibers if f['is_on_target'] and f['active']]
-    on_target_inactive = [f for f in fiber_population.fibers if f['is_on_target'] and not f['active']]
-    off_target_active = [f for f in fiber_population.fibers if not f['is_on_target'] and f['active']]
-    off_target_inactive = [f for f in fiber_population.fibers if not f['is_on_target'] and not f['active']]
+    # All fibers are black regardless of fascicle or activation status
+    all_fibers = fiber_population.fibers
+    active_fibers = [f for f in all_fibers if f['active']]
+    inactive_fibers = [f for f in all_fibers if not f['active']]
     
-    # Plot on-target inactive fibers as hollow green circles
-    if on_target_inactive:
-        positions = np.array([f['position'] for f in on_target_inactive])
-        sizes = [f['diameter'] * 2 for f in on_target_inactive]
+    # Plot inactive fibers as hollow black circles
+    if inactive_fibers:
+        positions = np.array([f['position'] for f in inactive_fibers])
+        sizes = [f['diameter'] * 2 for f in inactive_fibers]
         ax.scatter(positions[:, 0], positions[:, 1], 
-                  c='none', s=sizes, alpha=0.8, edgecolors='green', linewidth=1.5)
+                  c='none', s=sizes, alpha=0.8, edgecolors='black', linewidth=0.5)
     
-    # Plot on-target active fibers as filled green circles
-    if on_target_active:
-        positions = np.array([f['position'] for f in on_target_active])
-        sizes = [f['diameter'] * 2 for f in on_target_active]
+    # Plot active fibers as filled black circles
+    if active_fibers:
+        positions = np.array([f['position'] for f in active_fibers])
+        sizes = [f['diameter'] * 2 for f in active_fibers]
         ax.scatter(positions[:, 0], positions[:, 1], 
-                  c='green', s=sizes, alpha=0.9, edgecolors='green', linewidth=1)
-    
-    # Plot off-target inactive fibers as hollow orange circles
-    if off_target_inactive:
-        positions = np.array([f['position'] for f in off_target_inactive])
-        sizes = [f['diameter'] * 2 for f in off_target_inactive]
-        ax.scatter(positions[:, 0], positions[:, 1], 
-                  c='none', s=sizes, alpha=0.8, edgecolors='orange', linewidth=1.5)
-    
-    # Plot off-target active fibers as filled orange circles
-    if off_target_active:
-        positions = np.array([f['position'] for f in off_target_active])
-        sizes = [f['diameter'] * 2 for f in off_target_active]
-        ax.scatter(positions[:, 0], positions[:, 1], 
-                  c='orange', s=sizes, alpha=0.9, edgecolors='orange', linewidth=1)
+                  c='black', s=sizes, alpha=0.9, edgecolors='black', linewidth=0.5)
 
 def main():
     """Main Streamlit application."""
@@ -367,7 +461,11 @@ def main():
     
     # Create visualization
     with st.spinner("Computing simulation..."):
-        fig = create_visualization(simulator, electrode_amplitudes)
+        fig = create_visualization(simulator, electrode_amplitudes, params['electrode_type'])
+        
+    if fig is None:
+        st.error("Failed to create visualization. Please try adjusting parameters.")
+        return
     
     # Create two-column layout: plot on left, info on right
     col1, col2 = st.columns([2, 1])
@@ -379,12 +477,15 @@ def main():
         # Instructions
         st.subheader("ℹ️ Instructions")
         st.markdown("""
-        - **Adjust parameters** in the sidebar to change simulation settings
+        - **Electrode Type**: Choose between discrete electrodes or ring electrode
         - **Electrode amplitudes** control the stimulation strength and polarity
         - **Negative values** (cathodic) activate fibers, **positive values** (anodic) do not
+        - **Ring electrode** surrounds the nerve for uniform stimulation
+        - **Discrete electrodes** allow selective stimulation patterns
         - **Conductivity values** control how current flows through different tissues
         - **Perineurium** acts as a resistive barrier around fascicles
         - **Fiber activation** depends on potential threshold and fiber diameter
+        - **Larger fibers require more intensity to activate** than smaller fibers
         """)
         
         # Display key statistics
