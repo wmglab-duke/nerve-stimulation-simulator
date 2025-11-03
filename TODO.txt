@@ -1,6 +1,1 @@
-enable neumann (current) BC
-def need to add target vs on target
-remove all extraneous files
-Make less graphically busy, don't need potentials 
 Change green and yellow to therpauetic and side effect, open vs closed on one line in legend 
-symbols for sliders, try having knobs over electrical potentials, change potential to intensity, make less visible

@@ -7,26 +7,46 @@ A Python-based simulation tool for modeling electrical nerve stimulation with re
 ```
 nerve_gui/
 ├── nerve_stimulation_simulator.py    # Core simulation engine
-├── launch_gui.py                     # Launch script for Streamlit GUI
+├── launch_gui.py                     # Launch script for local testing
 ├── streamlit_gui/                    # Streamlit web interface
-│   ├── app.py                       # Main GUI application
-│   └── requirements.txt             # GUI dependencies
+│   └── app.py                       # Main GUI application
+├── requirements.txt                  # Python dependencies
+├── .streamlit/                       # Streamlit configuration
+│   └── config.toml                  # Server settings
 └── README.md                        # This file
 ```
 
 ## 🚀 Quick Start
 
-### Option 1: Command Line Interface
+### Option 1: Streamlit Cloud (Recommended - No Installation)
+The app is available online at Streamlit Cloud. Simply visit the hosted URL (if deployed).
+
+To deploy your own copy:
+1. Fork or push this repository to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+3. Sign in with GitHub
+4. Click "New app" and select your repository
+5. Set the main file path to `streamlit_gui/app.py`
+6. Click "Deploy"
+
+### Option 2: Local Installation
+
+#### Install Dependencies
 ```bash
-python nerve_stimulation_simulator.py
+pip install -r requirements.txt
 ```
 
-### Option 2: Web GUI (Recommended)
+#### Run the Web GUI
 ```bash
 python launch_gui.py
 ```
 
 The web interface will open at `http://localhost:8501` in your default browser.
+
+### Option 3: Command Line Interface
+```bash
+python nerve_stimulation_simulator.py
+```
 
 ## 🧪 Features
 
@@ -115,17 +135,33 @@ The web interface will open at `http://localhost:8501` in your default browser.
 ### Web GUI
 - `streamlit` >= 1.28.0
 
-## 🔧 Installation
+## 🔧 Local Installation
 
 1. **Clone or download** this repository
 2. **Install dependencies**:
    ```bash
-   pip install numpy matplotlib scipy streamlit
+   pip install -r requirements.txt
    ```
 3. **Run the simulation**:
    ```bash
    python launch_gui.py
    ```
+
+## ☁️ Streamlit Cloud Deployment
+
+This app is ready to deploy on Streamlit Cloud for free:
+
+1. **Push to GitHub**: Ensure your code is in a GitHub repository (public repo for free tier)
+2. **Deploy on Streamlit Cloud**:
+   - Go to [share.streamlit.io](https://share.streamlit.io)
+   - Sign in with your GitHub account
+   - Click "New app"
+   - Select your repository
+   - Set main file path to: `streamlit_gui/app.py`
+   - Click "Deploy"
+3. **Share the URL**: Your app will be live and accessible via a public URL
+
+**Note**: Each user gets their own isolated session when accessing the hosted app.
 
 ## 📝 Usage Tips
 
