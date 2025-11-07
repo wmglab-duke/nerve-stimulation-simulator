@@ -526,10 +526,11 @@ def main():
         score = max(0, min(100, on_target_avg - off_target_avg))
 
         # Display score progress bar
-        st.markdown(f"### 📊 Score: {round(score)}")
+        st.markdown(f"### 📊 Score: {round(score)}%")
         st.progress(score / 100.0)
-        st.text(f"Off-target activation: score ⬇️")
-        st.text(f"On-target activation: score ⬆️")
+        st.text(f"On-target activation: {on_target_avg:.1f}%")
+        st.text(f"Off-target activation: {off_target_avg:.1f}%")
+        st.text(f"Score = on − off (max 100%)")
 
         # Instructions as dropdown
         with st.expander("ℹ️ Detailed Instructions", expanded=False):
