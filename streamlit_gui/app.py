@@ -35,11 +35,14 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
+        font-size: 1rem !important;
+        font-weight: bold !important;
         color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
+        text-align: center !important;
+        margin-bottom: 0rem !important;
+    }
+    h1.main-header {
+        font-size: 3rem !important;
     }
     .metric-container {
         background-color: #f0f2f6;
@@ -55,6 +58,27 @@ st.markdown("""
         border-radius: 0.5rem;
         padding: 0.5rem;
         font-weight: bold;
+        font-size: 1.1rem;
+    }
+    /* Increase font sizes throughout */
+    h1:not(.main-header), h2, h3, h4, h5, h6 {
+        font-size: 1.5em !important;
+    }
+    .stMarkdown {
+        font-size: 1.3rem;
+    }
+    .stCaption {
+        font-size: 1.2rem;
+        color: #000000 !important;
+    }
+    .stSlider label, .stSelectbox label, .stNumberInput label {
+        font-size: 1.2rem;
+    }
+    .stSubheader {
+        font-size: 1.4rem !important;
+    }
+    p, div, span, label {
+        font-size: 1.2rem !important;
     }
     /* Increase sidebar width */
     [data-testid="stSidebar"] {
@@ -136,19 +160,19 @@ def create_parameter_sidebar():
         threshold_base = st.number_input("Base Threshold (V)", 0.1, 5.0, 0.7, 0.1, 
                                        format="%.3f", help="Magnitude of cathodic stimulation needed for activation")
         
-        # On-target fascicle parameters
-        st.subheader("On-Target Fascicles")
+        # On-target fiber parameters
+        st.subheader("On-Target Fibers")
         on_target_mean = st.slider("Mean Diameter (μm)", 1.0, 16.0, 6.0, 0.5, 
-                                  help="Mean diameter for on-target fascicles")
+                                  help="Mean diameter for on-target fibers")
         on_target_std = st.slider("Std Deviation (μm)", 0.5, 5.0, 2.0, 0.1, 
-                                 help="Standard deviation for on-target fascicles")
+                                 help="Standard deviation for on-target fibers")
         
-        # Off-target fascicle parameters
-        st.subheader("Off-Target Fascicles")
+        # Off-target fiber parameters
+        st.subheader("Off-Target Fibers")
         off_target_mean = st.slider("Mean Diameter (μm)", 1.0, 16.0, 12.0, 0.5, 
-                                   help="Mean diameter for off-target fascicles")
+                                   help="Mean diameter for off-target fibers")
         off_target_std = st.slider("Std Deviation (μm)", 0.5, 5.0, 2.0, 0.1, 
-                                  help="Standard deviation for off-target fascicles")
+                                  help="Standard deviation for off-target fibers")
     
     return {
         'electrode_type': electrode_type,
@@ -451,61 +475,62 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🧠 Nerve Stimulation Simulator</h1>', 
                 unsafe_allow_html=True)
-    
+
     # Create sidebar with parameters
     params = create_parameter_sidebar()
-    
+
     # Initialize simulator
     simulator = initialize_simulator()
-    
+
     # Update simulator parameters if they've changed
     update_simulator_parameters(simulator, params)
-    
+
     # Update simulation
     electrode_amplitudes = params['electrode_amplitudes']
-    
+
     # Create visualization
     with st.spinner("Computing simulation..."):
         fig = create_visualization(simulator, electrode_amplitudes, params['electrode_type'])
-        
+
     if fig is None:
         st.error("Failed to create visualization. Please try adjusting parameters.")
         return
-    
+
     # Create two-column layout: plot on left, info on right
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         st.pyplot(fig, use_container_width=True)
-    
+
     with col2:
         # Calculate score: on-target % - off-target %
         stats = simulator.fiber_population.get_activation_stats()
-        
+
         # On-target fascicles: indices 0 (yellow) and 1 (green)
         # Off-target fascicles: indices 2 (red) and 3 (blue)
         on_target_percentages = []
         off_target_percentages = []
-        
+
         for fascicle_idx, data in stats.items():
             if isinstance(fascicle_idx, int):
                 if fascicle_idx in [0, 1]:  # On-target (yellow, green)
                     on_target_percentages.append(data['percentage'])
                 elif fascicle_idx in [2, 3]:  # Off-target (red, blue)
                     off_target_percentages.append(data['percentage'])
-        
+
         # Calculate averages
         on_target_avg = sum(on_target_percentages) / len(on_target_percentages) if on_target_percentages else 0
         off_target_avg = sum(off_target_percentages) / len(off_target_percentages) if off_target_percentages else 0
-        
+
         # Score = on_target % - off_target % (clamped to 0-100)
         score = max(0, min(100, on_target_avg - off_target_avg))
-        
+
         # Display score progress bar
-        st.subheader("📊 Score")
+        st.markdown(f"### 📊 Score: {round(score)}")
         st.progress(score / 100.0)
-        st.caption(f"On-target: {on_target_avg:.1f}% - Off-target: {off_target_avg:.1f}% = **{score:.1f}%**")
-        
+        st.text(f"Off-target activation: score ⬇️")
+        st.text(f"On-target activation: score ⬆️")
+
         # Instructions as dropdown
         with st.expander("ℹ️ Detailed Instructions", expanded=False):
             st.markdown("""
@@ -521,7 +546,7 @@ def main():
             - **On-target fibers** (yellow/green fascicles) produce therapeutic effects
             - **Off-target fibers** (red/blue fascicles) cause side effects and are larger diameter
             """)
-        
+
         # Statistics as dropdown
         with st.expander("📈 Statistics", expanded=False):
             # Display key statistics
@@ -529,18 +554,18 @@ def main():
             total_fibers = sum(stats[f]['total'] for f in stats)
             total_active = sum(stats[f]['active'] for f in stats)
             activation_rate = (total_active / total_fibers * 100) if total_fibers > 0 else 0
-            
+
             # Show key metrics
             st.metric("Total Fibers", total_fibers)
             st.metric("Active Fibers", total_active)
             st.metric("Activation Rate", f"{activation_rate:.1f}%")
-            
+
             # Detailed statistics
             st.subheader("📈 Detailed Stats")
             # Fascicle colors: yellow, green (on-target), red, blue (off-target)
             fascicle_colors = ['#f2ef30', '#7fe74e', '#c60000', '#0053b2']
             color_names = ['Yellow', 'Green', 'Red', 'Blue']
-            
+
             stats_data = []
             for fascicle_idx, data in stats.items():
                 # Handle both integer and string fascicle identifiers
@@ -555,11 +580,11 @@ def main():
                     except (ValueError, IndexError):
                         fascicle_num = 0
                         fascicle_name = str(fascicle_idx)
-                
+
                 # Get color based on fascicle index
                 color_idx = fascicle_num % len(fascicle_colors)
                 color_name = color_names[color_idx]
-                
+
                 stats_data.append({
                     'Fascicle': fascicle_name,
                     'Color': color_name,
@@ -567,10 +592,10 @@ def main():
                     'Total': data['total'],
                     'Activation %': f"{data['percentage']:.1f}%"
                 })
-            
+
             # Display dataframe with color styling
             df = pd.DataFrame(stats_data)
-            
+
             # Create styled dataframe with color backgrounds
             def color_fascicle_row(row):
                 try:
@@ -581,7 +606,7 @@ def main():
                     else:
                         # Try to extract number directly
                         fascicle_num = int(fascicle_name) - 1 if fascicle_name.isdigit() else 0
-                    
+
                     color_idx = fascicle_num % len(fascicle_colors)
                     color_hex = fascicle_colors[color_idx]
                     # Convert hex to RGB for background color (lighter shade)
@@ -590,10 +615,10 @@ def main():
                     return [f'background-color: {bg_color}'] * len(row)
                 except (ValueError, IndexError, KeyError, AttributeError):
                     return [''] * len(row)
-            
+
             styled_df = df.style.apply(color_fascicle_row, axis=1)
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            
+
             # Potential field info
             potential_field = simulator.solver.compute_total_potential(electrode_amplitudes)
             st.subheader("⚡ Potential Field")
