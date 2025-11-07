@@ -7,6 +7,7 @@ Interactive web interface for the nerve stimulation simulator.
 
 import streamlit as st
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import sys
@@ -54,6 +55,11 @@ st.markdown("""
         border-radius: 0.5rem;
         padding: 0.5rem;
         font-weight: bold;
+    }
+    /* Increase sidebar width */
+    [data-testid="stSidebar"] {
+        min-width: 500px !important;
+        max-width: 500px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -262,11 +268,10 @@ def create_visualization(simulator, electrode_amplitudes, electrode_type="Curren
         st.error(f"Simulation failed: {e}")
         return None
     
-    # Create single figure focused on the nerve
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    # Create single figure focused on the nerve with higher DPI
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), dpi=300)
     
-    # Set title
-    ax.set_title('Nerve Stimulation Simulation', fontsize=16, fontweight='bold', pad=20)
+    # No title
     ax.set_aspect('equal')
     
     # Remove axis labels and ticks for cleaner look
@@ -291,9 +296,9 @@ def create_visualization(simulator, electrode_amplitudes, electrode_type="Curren
     
     # Add colorbar with zero tick and plus/minus labels
     cbar = plt.colorbar(contour_plot, ax=ax, shrink=0.8, pad=0.02, ticks=[-1, 0, 1])
-    cbar.set_ticklabels(['-', '0', '+'])
+    cbar.set_ticklabels(['−', '0', '+'])
     cbar.ax.tick_params(labelsize=14)
-    cbar.set_label('Intensity', rotation=270, labelpad=20, fontsize=12)
+    cbar.set_label('Field Intensity', rotation=270, labelpad=20, fontsize=12)
     
     # Draw nerve structure
     draw_nerve_structure(ax, simulator.geometry, electrode_type)
@@ -474,52 +479,127 @@ def main():
         st.pyplot(fig, use_container_width=True)
     
     with col2:
-        # Instructions
-        st.subheader("ℹ️ Instructions")
-        st.markdown("""
-        - **Electrode Type**: Choose between discrete electrodes or ring electrode
-        - **Electrode amplitudes** control the stimulation strength and polarity
-        - **Negative values** (cathodic) activate fibers, **positive values** (anodic) do not
-        - **Ring electrode** surrounds the nerve for uniform stimulation
-        - **Discrete electrodes** allow selective stimulation patterns
-        - **Conductivity values** control how current flows through different tissues
-        - **Perineurium** acts as a resistive barrier around fascicles
-        - **Fiber activation** depends on potential threshold and fiber diameter
-        - **Larger fibers require more intensity to activate** than smaller fibers
-        """)
-        
-        # Display key statistics
+        # Calculate score: on-target % - off-target %
         stats = simulator.fiber_population.get_activation_stats()
-        total_fibers = sum(stats[f]['total'] for f in stats)
-        total_active = sum(stats[f]['active'] for f in stats)
-        activation_rate = (total_active / total_fibers * 100) if total_fibers > 0 else 0
         
-        st.subheader("📊 Statistics")
+        # On-target fascicles: indices 0 (yellow) and 1 (green)
+        # Off-target fascicles: indices 2 (red) and 3 (blue)
+        on_target_percentages = []
+        off_target_percentages = []
         
-        # Show key metrics
-        st.metric("Total Fibers", total_fibers)
-        st.metric("Active Fibers", total_active)
-        st.metric("Activation Rate", f"{activation_rate:.1f}%")
+        for fascicle_idx, data in stats.items():
+            if isinstance(fascicle_idx, int):
+                if fascicle_idx in [0, 1]:  # On-target (yellow, green)
+                    on_target_percentages.append(data['percentage'])
+                elif fascicle_idx in [2, 3]:  # Off-target (red, blue)
+                    off_target_percentages.append(data['percentage'])
         
-        # Detailed statistics
-        st.subheader("📈 Detailed Stats")
-        stats_data = []
-        for fascicle, data in stats.items():
-            stats_data.append({
-                'Fascicle': fascicle,
-                'Active': data['active'],
-                'Total': data['total'],
-                'Activation %': f"{data['percentage']:.1f}%"
-            })
+        # Calculate averages
+        on_target_avg = sum(on_target_percentages) / len(on_target_percentages) if on_target_percentages else 0
+        off_target_avg = sum(off_target_percentages) / len(off_target_percentages) if off_target_percentages else 0
         
-        st.dataframe(stats_data, use_container_width=True)
+        # Score = on_target % - off_target % (clamped to 0-100)
+        score = max(0, min(100, on_target_avg - off_target_avg))
         
-        # Potential field info
-        potential_field = simulator.solver.compute_total_potential(electrode_amplitudes)
-        st.subheader("⚡ Potential Field")
-        st.metric("Min Potential", f"{potential_field.min():.3f} V")
-        st.metric("Max Potential", f"{potential_field.max():.3f} V")
-        st.metric("Range", f"{potential_field.max() - potential_field.min():.3f} V")
+        # Display score progress bar
+        st.subheader("📊 Score")
+        st.progress(score / 100.0)
+        st.caption(f"On-target: {on_target_avg:.1f}% - Off-target: {off_target_avg:.1f}% = **{score:.1f}%**")
+        
+        # Instructions as dropdown
+        with st.expander("ℹ️ Detailed Instructions", expanded=False):
+            st.markdown("""
+            - **Electrode Type**: Choose between discrete electrodes or ring electrode
+            - **Electrode amplitudes** control the stimulation strength and polarity
+            - **Negative values** (cathodic) activate fibers, **positive values** (anodic) do not
+            - **Ring electrode** surrounds the nerve for uniform stimulation
+            - **Discrete electrodes** allow selective stimulation patterns
+            - **Conductivity values** control how current flows through different tissues
+            - **Perineurium** acts as a resistive barrier around fascicles
+            - **Fiber activation** depends on potential threshold and fiber diameter
+            - **Larger fibers require more intensity to activate** than smaller fibers
+            - **On-target fibers** (yellow/green fascicles) produce therapeutic effects
+            - **Off-target fibers** (red/blue fascicles) cause side effects and are larger diameter
+            """)
+        
+        # Statistics as dropdown
+        with st.expander("📈 Statistics", expanded=False):
+            # Display key statistics
+            stats = simulator.fiber_population.get_activation_stats()
+            total_fibers = sum(stats[f]['total'] for f in stats)
+            total_active = sum(stats[f]['active'] for f in stats)
+            activation_rate = (total_active / total_fibers * 100) if total_fibers > 0 else 0
+            
+            # Show key metrics
+            st.metric("Total Fibers", total_fibers)
+            st.metric("Active Fibers", total_active)
+            st.metric("Activation Rate", f"{activation_rate:.1f}%")
+            
+            # Detailed statistics
+            st.subheader("📈 Detailed Stats")
+            # Fascicle colors: yellow, green (on-target), red, blue (off-target)
+            fascicle_colors = ['#f2ef30', '#7fe74e', '#c60000', '#0053b2']
+            color_names = ['Yellow', 'Green', 'Red', 'Blue']
+            
+            stats_data = []
+            for fascicle_idx, data in stats.items():
+                # Handle both integer and string fascicle identifiers
+                if isinstance(fascicle_idx, int):
+                    fascicle_num = fascicle_idx  # Already 0-based index
+                    fascicle_name = f"Fascicle {fascicle_idx + 1}"
+                else:
+                    # Try to parse string format (e.g., "Fascicle 1" -> 1)
+                    try:
+                        fascicle_num = int(str(fascicle_idx).split()[-1]) - 1
+                        fascicle_name = str(fascicle_idx)
+                    except (ValueError, IndexError):
+                        fascicle_num = 0
+                        fascicle_name = str(fascicle_idx)
+                
+                # Get color based on fascicle index
+                color_idx = fascicle_num % len(fascicle_colors)
+                color_name = color_names[color_idx]
+                
+                stats_data.append({
+                    'Fascicle': fascicle_name,
+                    'Color': color_name,
+                    'Active': data['active'],
+                    'Total': data['total'],
+                    'Activation %': f"{data['percentage']:.1f}%"
+                })
+            
+            # Display dataframe with color styling
+            df = pd.DataFrame(stats_data)
+            
+            # Create styled dataframe with color backgrounds
+            def color_fascicle_row(row):
+                try:
+                    # Extract fascicle number from display name
+                    fascicle_name = str(row['Fascicle'])
+                    if 'Fascicle' in fascicle_name:
+                        fascicle_num = int(fascicle_name.split()[-1]) - 1
+                    else:
+                        # Try to extract number directly
+                        fascicle_num = int(fascicle_name) - 1 if fascicle_name.isdigit() else 0
+                    
+                    color_idx = fascicle_num % len(fascicle_colors)
+                    color_hex = fascicle_colors[color_idx]
+                    # Convert hex to RGB for background color (lighter shade)
+                    rgb = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
+                    bg_color = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]}, 0.3)"
+                    return [f'background-color: {bg_color}'] * len(row)
+                except (ValueError, IndexError, KeyError, AttributeError):
+                    return [''] * len(row)
+            
+            styled_df = df.style.apply(color_fascicle_row, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            
+            # Potential field info
+            potential_field = simulator.solver.compute_total_potential(electrode_amplitudes)
+            st.subheader("⚡ Potential Field")
+            st.metric("Min Potential", f"{potential_field.min():.3f} V")
+            st.metric("Max Potential", f"{potential_field.max():.3f} V")
+            st.metric("Range", f"{potential_field.max() - potential_field.min():.3f} V")
 
 if __name__ == "__main__":
     main()
